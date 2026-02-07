@@ -2,7 +2,9 @@
 #include <exdisp.h>
 #include <mshtml.h>
 #include <ole2.h>
-#include <iostream>
+#include <atlbase.h>
+#include <atlwin.h>
+#include <atlhost.h>
 
 // The simplest way to show a browser in native Win32 without huge SDKs (like WebView2)
 // is using the legacy WebBrowser (IE) ActiveX control. 
@@ -10,34 +12,55 @@
 
 // Window Procedure
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    static IWebBrowser2* pWebBrowser = nullptr;
+    static CComPtr<IWebBrowser2> pWebBrowser;
     static HWND hwndChild = nullptr;
 
     switch (uMsg) {
         case WM_CREATE: {
-            // Initialize COM
             OleInitialize(NULL);
+            AtlAxWinInit();
 
-            // Create a simple window to host the browser or just text
+            hwndChild = CreateWindowExW(
+                0,
+                L"AtlAxWin",
+                L"about:blank",
+                WS_CHILD | WS_VISIBLE,
+                0,
+                0,
+                0,
+                0,
+                hwnd,
+                NULL,
+                reinterpret_cast<LPCREATESTRUCT>(lParam)->hInstance,
+                NULL);
+
+            if (hwndChild) {
+                CComPtr<IUnknown> pUnk;
+                if (SUCCEEDED(AtlAxGetControl(hwndChild, &pUnk)) && pUnk) {
+                    pUnk->QueryInterface(IID_PPV_ARGS(&pWebBrowser));
+                }
+
+                if (pWebBrowser) {
+                    CComVariant empty;
+                    pWebBrowser->Navigate(
+                        CComBSTR(L"https://example.com"),
+                        &empty,
+                        &empty,
+                        &empty,
+                        &empty);
+                }
+            }
+
             return 0;
         }
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            
-            // Background text to show it's working
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            FillRect(hdc, &rect, (HBRUSH)(COLOR_WINDOW + 1));
-            
-            TextOut(hdc, 10, 10, "Browser Engine Initializing...", 30);
-            TextOut(hdc, 10, 40, "This window is STREAM PROOF.", 28);
-            TextOut(hdc, 10, 70, "Capturing this screen will show nothing.", 40);
-
-            EndPaint(hwnd, &ps);
+        case WM_SIZE: {
+            if (hwndChild) {
+                MoveWindow(hwndChild, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
+            }
             return 0;
         }
         case WM_DESTROY:
+            pWebBrowser.Release();
             OleUninitialize();
             PostQuitMessage(0);
             return 0;
@@ -46,7 +69,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    const char CLASS_NAME[] = "StreamProofBrowserClass";
+    const wchar_t CLASS_NAME[] = L"StreamProofBrowserClass";
     
     WNDCLASS wc = {};
     wc.lpfnWndProc = WindowProc;
@@ -55,13 +78,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    RegisterClass(&wc);
+    RegisterClassW(&wc);
 
     // Create the window
-    HWND hwnd = CreateWindowEx(
+    HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST,
         CLASS_NAME,
-        "Stream Proof Browser",
+        L"Stream Proof Browser",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
         NULL,
@@ -82,9 +105,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
-    // Open a simple URL using ShellExecute as a placeholder for the browser view
-    // Since implementing a full ActiveX container in raw C++ is ~500 lines of boilerplate,
-    // we use this window as the "Secure Container" for your web activities.
+    // The embedded WebBrowser control renders inside this "secure container" window.
     
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0)) {
